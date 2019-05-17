@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Collections.Generic;
 using System.Text;
 
@@ -17,7 +18,12 @@ namespace QueueManager
 
         public void Enqueue(T item, out I index)
         {
-
+            var queue = _queues
+                .Select(q => new Tuple<I,ManagedQueue<T>>(q.Key, q.Value))
+                .OrderBy(q => q.Item2.GrowthRate)
+                .FirstOrDefault();
+            queue.Item2.Enqueue(item);
+            index = queue.Item1;
         }
 
         public void Enqueue(T item, I index)
@@ -28,15 +34,15 @@ namespace QueueManager
             _queues[index].Enqueue(item);
         }
 
-        public T Dequeue()
-        {
+        //public T Dequeue()
+        //{
 
-        }
+        //}
 
-        public T Dequeue(I[] indexes)
-        {
+        //public T Dequeue(I[] indexes)
+        //{
 
-        }
+        //}
 
         public T Dequeue(I index)
         {
@@ -69,14 +75,14 @@ namespace QueueManager
             return false;
         }
 
-        private I BalancedEnqueue(T item)
-        {
+        //private I BalancedEnqueue(T item)
+        //{
+                
+        //}
 
-        }
+        //private T BalancedDequeue(I[] candidates)
+        //{
 
-        private T BalancedDequeue(I[] candidates)
-        {
-
-        }
+        //}
     }
 }

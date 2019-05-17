@@ -1,16 +1,17 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace QueueManager
 {
     public class ManagedQueue<T> : ConcurrentQueue<T>
     {
-        private bool _isAvailable;
-
         private static readonly object _removalLock = new object();
-        private static readonly object _enqueueLock = new object();
-        private static readonly object _dequeueLock = new object();
+        private readonly ConcurrentBag<Tuple<DateTime, Operation>> _operations;
+
+        private bool _isAvailable = true;
 
         public DateTime CreationDate { get; } = DateTime.Now;
         public TimeSpan Uptime
@@ -20,15 +21,36 @@ namespace QueueManager
                 return (DateTime.Now - CreationDate);
             }
         }
-        public DateTime LastEmpty { get; private set; }
-        public DateTime LastDequeue { get; private set; }
-        public TimeSpan IdleTime
+        public List<Tuple<DateTime,Operation>> History
         {
             get
             {
-                return (DateTime.Now - LastDequeue);
+                return _operations.OrderBy(t => t.Item1).ToList();
             }
         }
+        public double GrowthRate
+        {
+            get
+            {
+                if (History.Where(i => i.Item2 == Operation.Dequeue).Count() > 0)
+                {
+                    double timespan = (DateTime.Now - History.FirstOrDefault().Item1).TotalMinutes;
+
+                    int enqueues = History.Where(i => i.Item2 == Operation.Enqueue).Count();
+                    int dequeues = History.Where(i => i.Item2 == Operation.Dequeue).Count();
+                    int removals = History.Where(i => i.Item2 == Operation.Removal).Count();
+
+                    return ((enqueues - removals) / timespan) / (dequeues / timespan);
+                }
+                return History.Where(i => i.Item2 == Operation.Enqueue).Count();
+            }
+        }
+
+        public ManagedQueue()
+        {
+            _operations = new ConcurrentBag<Tuple<DateTime, Operation>>();
+        }
+
 
         public new void Enqueue(T item)
         {
@@ -36,39 +58,35 @@ namespace QueueManager
             {
                 lock (_removalLock)
                 {
-                    base.Enqueue(item);
+                    base.Enqueue(item);                    
                 }
             }
-            base.Enqueue(item);
+            else
+            {
+                base.Enqueue(item);
+            }
+            _operations.Add(new Tuple<DateTime, Operation>(DateTime.Now, Operation.Enqueue));
         }
 
         public new bool TryDequeue(out T result)
         {
             bool dequeued;
-            DateTime emptyTime = LastEmpty;
 
             if (!_isAvailable)
             {
                 lock (_removalLock)
                 {
-                    dequeued = base.TryDequeue(out result);
-                    if (IsEmpty)
-                        emptyTime = DateTime.Now;
+                    if (dequeued = base.TryDequeue(out result))
+                    {
+                        _operations.Add(new Tuple<DateTime, Operation>(DateTime.Now, Operation.Dequeue));
+                    }
                 }
             }
             else
             {
-                dequeued = base.TryDequeue(out result);
-                if (IsEmpty)
-                    emptyTime = DateTime.Now;
-            }
-
-            if (dequeued)
-            {
-                lock (_dequeueLock)
+                if (dequeued = base.TryDequeue(out result))
                 {
-                    LastEmpty = emptyTime;
-                    LastDequeue = DateTime.Now;
+                   _operations.Add(new Tuple<DateTime, Operation>(DateTime.Now, Operation.Dequeue));
                 }
             }
 
@@ -81,30 +99,36 @@ namespace QueueManager
 
             if (!IsEmpty)
             {
-                lock (_enqueueLock)
+                lock (_removalLock)
                 {
                     _isAvailable = false;
 
-                    TryDequeue(out T first);
+                    base.TryDequeue(out T first);
                     if (Equals(item, first))
                     {
                         found = true;
-                        LastEmpty = DateTime.Now;
+                        _operations.Add(new Tuple<DateTime, Operation>(DateTime.Now, Operation.Removal));
                     }
                     else
                     {
-                        Enqueue(first);
+                        base.Enqueue(first);
                         TryPeek(out T peek);
                         while (!Equals(peek, first))
                         {
-                            TryDequeue(out T temp);
+                            base.TryDequeue(out T temp);
                             if (Equals(temp, item))
+                            {
                                 found = true;
+                                _operations.Add(new Tuple<DateTime, Operation>(DateTime.Now, Operation.Removal));
+                            }
                             else
-                                Enqueue(temp);
+                            {
+                                base.Enqueue(temp);
+                            }
                             TryPeek(out peek);
                         }
                     }
+
                     _isAvailable = true;
                 }
             }
